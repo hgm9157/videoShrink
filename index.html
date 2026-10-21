@@ -136,6 +136,16 @@ body.dragging .pick { outline: 4px dashed var(--accent); outline-offset: 6px; }
 .res button span { font-size: .9rem; color: var(--muted); }
 .res button[aria-checked="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 .res button[aria-checked="true"] span { color: var(--accent-ink); opacity: .9; }
+.split { display: flex; align-items: center; justify-content: center; gap: 12px; min-height: 56px; cursor: pointer; font-size: 1.05rem; }
+.split input { width: 26px; height: 26px; accent-color: var(--accent); flex: none; }
+.split small { color: var(--muted); font-size: .85rem; }
+.parts { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; text-align: left; }
+.parts li {
+  display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: center;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px;
+}
+.parts li span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.parts li span:last-child { color: var(--muted); font-variant-numeric: tabular-nums; }
 #vscreen .pick { min-height: 96px; }
 
 @media (prefers-reduced-motion: reduce) {
@@ -165,6 +175,7 @@ body.dragging .pick { outline: 4px dashed var(--accent); outline-offset: 6px; }
     <p class="vname" id="vName"></p>
     <p class="vbig" id="vSize"></p>
     <p class="vsub" id="vSub"></p>
+    <ul class="parts" id="vParts" hidden></ul>
     <div class="vprog" id="vProg" hidden><div id="vBar"></div></div>
     <div class="res" id="vRes" role="radiogroup" aria-label="화질 고르기">
       <button type="button" role="radio" data-long="640"><b>360p</b><span>가장 작게</span></button>
@@ -172,6 +183,7 @@ body.dragging .pick { outline: 4px dashed var(--accent); outline-offset: 6px; }
       <button type="button" role="radio" data-long="1280"><b>720p</b><span>선명하게</span></button>
       <button type="button" role="radio" data-long="1920"><b>1080p</b><span>원본에 가깝게</span></button>
     </div>
+    <label class="split" id="vSplitRow"><input type="checkbox" id="vSplit"><span>30MB가 넘으면 나누기 <small>(Claude 업로드용)</small></span></label>
     <button type="button" class="pick" id="vGo">줄이기</button>
     <button type="button" class="pick" id="vSave" hidden>저장하기</button>
     <button type="button" class="tbtn vwide" id="vShare" hidden>카카오톡 등으로 보내기</button>
@@ -200,7 +212,7 @@ body.dragging .pick { outline: 4px dashed var(--accent); outline-offset: 6px; }
   /* ---------- 동영상 줄이기 (WebCodecs, 기기 안에서 처리) ---------- */
   const MB_URL = 'https://cdn.jsdelivr.net/npm/mediabunny@1.61.1/dist/bundles/mediabunny.min.mjs';
   const vs = $('vscreen');
-  let vFile = null, vResult = null, vConv = null, vUrl = null, wakeLock = null;
+  let vFile = null, vResults = null, vConv = null, vStop = false, vUrl = null, wakeLock = null;
   function isVideo(f) {
     return (f.type && f.type.startsWith('video/')) || /\.(mp4|mov|m4v|3gp|webm|mkv)$/i.test(f.name);
   }
@@ -215,7 +227,8 @@ body.dragging .pick { outline: 4px dashed var(--accent); outline-offset: 6px; }
     $('vPreview').src = vUrl;
   }
   function vState(st) {
-    $('vGo').hidden = $('vRes').hidden = st !== 'ready';
+    $('vGo').hidden = $('vRes').hidden = $('vSplitRow').hidden = st !== 'ready';
+    if (st !== 'done') $('vParts').hidden = true;
     $('vProg').hidden = st !== 'busy';
     $('vCancel').hidden = st !== 'busy';
     $('vSave').hidden = $('vShare').hidden = st !== 'done';
@@ -228,7 +241,7 @@ body.dragging .pick { outline: 4px dashed var(--accent); outline-offset: 6px; }
     } catch {}
   }
   function openVideo(file) {
-    vFile = file; vResult = null;
+    vFile = file; vResults = null; $('vParts').hidden = true;
     home.hidden = true; vs.hidden = false;
     window.scrollTo(0, 0);
     setPreview(file);
@@ -244,7 +257,7 @@ body.dragging .pick { outline: 4px dashed var(--accent); outline-offset: 6px; }
     keepAwake(false);
     $('vPreview').removeAttribute('src'); $('vPreview').load();
     if (vUrl) { URL.revokeObjectURL(vUrl); vUrl = null; }
-    vFile = vResult = null;
+    vFile = vResults = null; vStop = true;
     vs.hidden = true; home.hidden = false;
     $('videoFile').value = '';
   }
@@ -263,7 +276,7 @@ body.dragging .pick { outline: 4px dashed var(--accent); outline-offset: 6px; }
   function resetRes() { resBtns.forEach((b) => { b.hidden = false; }); paintRes(); }
   // 원본보다 큰 해상도는 숨기기
   $('vPreview').addEventListener('loadedmetadata', () => {
-    if (!vFile || vResult) return;
+    if (!vFile || vResults) return;
     const orig = Math.max($('vPreview').videoWidth, $('vPreview').videoHeight);
     if (!orig) return;
     let visible = resBtns.filter((b) => +b.dataset.long <= orig * 1.05);
@@ -272,6 +285,12 @@ body.dragging .pick { outline: 4px dashed var(--accent); outline-offset: 6px; }
     if (!visible.some((b) => +b.dataset.long === resLong)) { resLong = +visible[visible.length - 1].dataset.long; paintRes(); }
   });
   paintRes();
+  const LIMIT = 30 * 1024 * 1024;
+  let splitOn = true;
+  try { if (localStorage.getItem('split') === '0') splitOn = false; } catch {}
+  $('vSplit').checked = splitOn;
+  $('vSplit').onchange = () => { splitOn = $('vSplit').checked; try { localStorage.setItem('split', splitOn ? '1' : '0'); } catch {} };
+
   function planSize(w, h, long) {
     const k = Math.min(1, long / Math.max(w, h));
     const ow = Math.max(2, Math.round(w * k / 2) * 2), oh = Math.max(2, Math.round(h * k / 2) * 2);
@@ -287,6 +306,8 @@ body.dragging .pick { outline: 4px dashed var(--accent); outline-offset: 6px; }
     if (!vFile) return;
     const mode = { long, latency: long <= 854 ? 'realtime' : 'quality' };
     const t0 = performance.now();
+    const limit = splitOn ? LIMIT : Infinity;
+    vStop = false;
     $('vPreview').pause();
     vState('busy');
     $('vSize').textContent = '0%';
@@ -294,17 +315,17 @@ body.dragging .pick { outline: 4px dashed var(--accent); outline-offset: 6px; }
     keepAwake(true);
     try {
       const mb = await import(MB_URL);
-      const input = new mb.Input({ source: new mb.BlobSource(vFile), formats: mb.ALL_FORMATS });
-      const vt = await input.getPrimaryVideoTrack();
+      const probe = new mb.Input({ source: new mb.BlobSource(vFile), formats: mb.ALL_FORMATS });
+      const vt = await probe.getPrimaryVideoTrack();
       if (!vt) throw Object.assign(new Error('no video'), { user: '동영상 파일이 아닌 것 같아요. 다른 파일을 골라 주세요.' });
       const plan = planSize(vt.displayWidth, vt.displayHeight, mode.long);
+      const duration = await probe.computeDuration().catch(() => 0);
 
-      // 미리 판단: 이미 작고 가벼운 영상이면 바로 끝내기
-      const duration = await input.computeDuration().catch(() => 0);
-      if (duration > 0 && plan.k >= 1) {
+      // 미리 판단: 이미 작고 가벼우면서 나눌 필요도 없으면 바로 끝내기
+      if (duration > 0 && plan.k >= 1 && vFile.size <= limit) {
         const fileBps = vFile.size * 8 / duration;
         if (fileBps <= plan.bitrate * 1.3 + 300_000) {
-          vResult = new File([vFile], vFile.name, { type: vFile.type || 'video/mp4' });
+          vResults = [new File([vFile], vFile.name, { type: vFile.type || 'video/mp4' })];
           $('vSize').textContent = fmtSize(vFile.size);
           $('vSub').textContent = '이미 충분히 작은 동영상이에요. 그대로 보내셔도 돼요.';
           $('vBar').style.width = '100%';
@@ -322,51 +343,98 @@ body.dragging .pick { outline: 4px dashed var(--accent); outline-offset: 6px; }
       }
       if (!codec) throw Object.assign(new Error('no encoder'), { user: '이 휴대폰(브라우저)에서는 동영상을 줄일 수 없어요. 크롬 최신 버전에서 다시 해 보세요.' });
 
-      const output = new mb.Output({ format: new mb.Mp4OutputFormat({ fastStart: 'in-memory' }), target: new mb.BufferTarget() });
-      const conv = await mb.Conversion.init({
-        input, output, tracks: 'primary',
-        video: () => {
-          const opts = { codec, frameRate: 30, forceTranscode: true, keyFrameInterval: 4, bitrate: plan.bitrate, latencyMode: mode.latency };
-          if (hw) opts.hardwareAcceleration = 'prefer-hardware';
-          if (plan.k < 1) { opts.width = plan.ow; opts.height = plan.oh; opts.fit = 'contain'; }
-          return opts;
-        },
-        // 소리는 다시 압축하지 않고 그대로 복사 (필요할 때만 자동 변환)
-      });
-      if (!conv.utilizedTracks.some((t) => t.type === 'video')) {
-        throw Object.assign(new Error('video track dropped'), { user: '이 휴대폰(브라우저)에서는 이 동영상 형식을 줄일 수 없어요. 크롬 최신 버전에서 다시 해 보세요.' });
+      // 나눌 길이 정하기: 예상 용량(영상 목표 + 소리)으로 계산하고 여유를 둠
+      let aBps = 0;
+      const at = await probe.getPrimaryAudioTrack();
+      if (at) { try { aBps = (await at.computePacketStats(300)).averageBitrate || 160_000; } catch { aBps = 160_000; } }
+      const estBps = plan.bitrate + aBps;
+      let segLen = Infinity;
+      if (limit !== Infinity && duration > 0 && estBps * duration / 8 > limit * 0.85) {
+        const n = Math.ceil(estBps * duration / 8 / (limit * 0.85));
+        segLen = Math.max(10, duration / n);   // 같은 길이로 고르게 나누기
       }
-      if (!conv.isValid) throw Object.assign(new Error('invalid'), { user: '이 동영상은 줄일 수 없는 형식이에요.' });
-      vConv = conv;
-      conv.onProgress = (p) => {
-        const pct = Math.min(99, Math.floor(p * 100));
+
+      async function runPart(start, end, onP) {
+        const input = new mb.Input({ source: new mb.BlobSource(vFile), formats: mb.ALL_FORMATS });
+        const output = new mb.Output({ format: new mb.Mp4OutputFormat({ fastStart: 'in-memory' }), target: new mb.BufferTarget() });
+        const conv = await mb.Conversion.init({
+          input, output, tracks: 'primary',
+          ...(end !== undefined ? { trim: { start, end } } : {}),
+          video: () => {
+            const opts = { codec, frameRate: 30, forceTranscode: true, keyFrameInterval: 4, bitrate: plan.bitrate, latencyMode: mode.latency };
+            if (hw) opts.hardwareAcceleration = 'prefer-hardware';
+            if (plan.k < 1) { opts.width = plan.ow; opts.height = plan.oh; opts.fit = 'contain'; }
+            return opts;
+          },
+          // 소리는 다시 압축하지 않고 그대로 복사 (필요할 때만 자동 변환)
+        });
+        if (!conv.utilizedTracks.some((t) => t.type === 'video')) {
+          throw Object.assign(new Error('video track dropped'), { user: '이 휴대폰(브라우저)에서는 이 동영상 형식을 줄일 수 없어요. 크롬 최신 버전에서 다시 해 보세요.' });
+        }
+        if (!conv.isValid) throw Object.assign(new Error('invalid'), { user: '이 동영상은 줄일 수 없는 형식이에요.' });
+        vConv = conv;
+        conv.onProgress = onP;
+        await conv.execute();
+        vConv = null;
+        return { blob: new Blob([output.target.buffer], { type: 'video/mp4' }), lostAudio: conv.discardedTracks.some((d) => d.track.type === 'audio') };
+      }
+
+      const showProgress = (frac) => {
+        const pct = Math.min(99, Math.floor(frac * 100));
         $('vSize').textContent = pct + '%';
         $('vBar').style.width = pct + '%';
         const spent = (performance.now() - t0) / 1000;
-        if (p > 0.05 && spent > 3) $('vSub').textContent = `약 ${fmtTime(spent * (1 - p) / p)} 남았어요. 화면을 끄지 말아 주세요.`;
+        if (frac > 0.05 && spent > 3) $('vSub').textContent = `약 ${fmtTime(spent * (1 - frac) / frac)} 남았어요. 화면을 끄지 말아 주세요.`;
       };
-      await conv.execute();
-      vConv = null;
+
+      const blobs = [];
+      let lostAudio = false, start = 0;
+      while (true) {
+        if (vStop) return;
+        const end = segLen === Infinity ? undefined : Math.min(duration, start + segLen);
+        const span = (end === undefined ? duration : end) - start;
+        const r = await runPart(start, end, (p) => { if (duration > 0) showProgress((start + p * span) / duration); else showProgress(p); });
+        if (vStop) return;
+        // 예상보다 커서 한도를 넘으면 그 부분만 더 짧게 다시
+        if (r.blob.size > limit && span > 5) {
+          if (segLen === Infinity) segLen = duration;
+          segLen = Math.max(5, span * (limit / r.blob.size) * 0.9);
+          continue;
+        }
+        blobs.push(r.blob);
+        lostAudio = lostAudio || r.lostAudio;
+        if (end === undefined || end >= duration - 0.05) break;
+        start = end;
+        if (blobs.length > 60) throw Object.assign(new Error('too many parts'), { user: '동영상이 너무 길어요. 더 낮은 화질을 골라 주세요.' });
+      }
+
       const took = fmtTime((performance.now() - t0) / 1000);
-      const lostAudio = conv.discardedTracks.some((d) => d.track.type === 'audio');
-      const out = new Blob([output.target.buffer], { type: 'video/mp4' });
       const base = vFile.name.replace(/\.[^.]+$/, '') || '동영상';
-      if (out.size >= vFile.size * 0.95) {
-        vResult = new File([vFile], vFile.name, { type: vFile.type || 'video/mp4' });
+      const total = blobs.reduce((n, x) => n + x.size, 0);
+      const audioNote = lostAudio ? ' · 이 휴대폰에서는 소리를 함께 넣지 못했어요.' : '';
+      if (blobs.length === 1 && total >= vFile.size * 0.95 && vFile.size <= limit) {
+        vResults = [new File([vFile], vFile.name, { type: vFile.type || 'video/mp4' })];
         $('vSize').textContent = fmtSize(vFile.size);
         $('vSub').textContent = '이미 충분히 작은 동영상이에요. 원래 동영상을 그대로 쓰셔도 돼요.';
+      } else if (blobs.length === 1) {
+        vResults = [new File([blobs[0]], base + '_줄임.mp4', { type: 'video/mp4' })];
+        const saved = Math.round((1 - total / vFile.size) * 100);
+        $('vSize').textContent = `${fmtSize(vFile.size)} → ${fmtSize(total)}`;
+        $('vSub').textContent = `${saved}% 줄었어요. 걸린 시간 ${took}` + audioNote;
+        setPreview(vResults[0]);
       } else {
-        vResult = new File([out], base + '_줄임.mp4', { type: 'video/mp4' });
-        const saved = Math.round((1 - out.size / vFile.size) * 100);
-        $('vSize').textContent = `${fmtSize(vFile.size)} → ${fmtSize(out.size)}`;
-        $('vSub').textContent = `${saved}% 줄었어요. 걸린 시간 ${took}` + (lostAudio ? ' · 이 휴대폰에서는 소리를 함께 넣지 못했어요.' : '');
-        setPreview(vResult);
+        vResults = blobs.map((x, i) => new File([x], `${base}_줄임_${i + 1}.mp4`, { type: 'video/mp4' }));
+        $('vSize').textContent = `${fmtSize(vFile.size)} → ${blobs.length}개로 나눔`;
+        $('vSub').textContent = `모두 합쳐 ${fmtSize(total)}, 하나당 30MB 이하예요. 걸린 시간 ${took}` + audioNote;
+        $('vParts').innerHTML = vResults.map((f) => `<li><span>${f.name.replace(/[&<>]/g, '')}</span><span>${fmtSize(f.size)}</span></li>`).join('');
+        setPreview(vResults[0]);
       }
       $('vBar').style.width = '100%';
       vState('done');
+      $('vParts').hidden = vResults.length < 2;
     } catch (e) {
       vConv = null;
-      if (e && e.name === 'ConversionCanceledError') return;
+      if (vStop || (e && e.name === 'ConversionCanceledError')) return;
       console.error(e);
       $('vSize').textContent = '줄이지 못했어요';
       $('vSub').textContent = (e && e.user) || '동영상이 너무 길거나 지원하지 않는 형식일 수 있어요. 다시 눌러 보세요.';
@@ -375,6 +443,7 @@ body.dragging .pick { outline: 4px dashed var(--accent); outline-offset: 6px; }
   }
   $('vGo').onclick = () => compress(resLong);
   $('vCancel').onclick = async () => {
+    vStop = true;
     if (vConv) { try { await vConv.cancel(); } catch {} vConv = null; }
     $('vSize').textContent = '지금 크기 ' + fmtSize(vFile.size);
     $('vSub').textContent = '줄이기를 멈췄어요.';
@@ -382,25 +451,24 @@ body.dragging .pick { outline: 4px dashed var(--accent); outline-offset: 6px; }
     vState('ready');
   };
   $('vSave').onclick = async () => {
-    if (!vResult) return;
+    if (!vResults) return;
     try {
-      if (isIOS && canShareFiles([vResult])) {
+      if (isIOS && canShareFiles(vResults)) {
         $('vSub').textContent = '다음 화면에서 "비디오 저장"을 눌러 주세요.';
-        await navigator.share({ files: [vResult] });
+        await navigator.share({ files: vResults });
       } else {
-        await downloadAll([vResult]);
-        $('vSub').textContent = '저장했어요. 갤러리의 "다운로드" 앨범에서 확인하실 수 있어요.';
+        await downloadAll(vResults);
+        $('vSub').textContent = (vResults.length > 1 ? `${vResults.length}개 모두 ` : '') + '저장했어요. 갤러리의 "다운로드" 앨범에서 확인하실 수 있어요.';
       }
     } catch (e) { if (!e || e.name !== 'AbortError') $('vSub').textContent = '저장하지 못했어요. 다시 눌러 주세요.'; }
   };
   $('vShare').onclick = async () => {
-    if (!vResult) return;
+    if (!vResults) return;
     try {
-      if (!canShareFiles([vResult])) { $('vSub').textContent = '이 기기에서는 바로 보낼 수 없어요. "저장하기"를 눌러 주세요.'; return; }
-      await navigator.share({ files: [vResult] });
+      if (!canShareFiles(vResults)) { $('vSub').textContent = '이 기기에서는 바로 보낼 수 없어요. "저장하기"를 눌러 주세요.'; return; }
+      await navigator.share({ files: vResults });
     } catch (e) { if (!e || e.name !== 'AbortError') $('vSub').textContent = '보내지 못했어요. 다시 눌러 주세요.'; }
   };
-
 
   /* files shared from other apps (Android share sheet → sw.js) */
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
