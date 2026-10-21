@@ -145,7 +145,13 @@ body.dragging .pick { outline: 4px dashed var(--accent); outline-offset: 6px; }
   background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px;
 }
 .parts li span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.parts li span:last-child { color: var(--muted); font-variant-numeric: tabular-nums; }
+.parts li { grid-template-columns: 1fr auto auto; }
+.parts li span:nth-child(2) { color: var(--muted); font-variant-numeric: tabular-nums; }
+.part-save {
+  min-height: 48px; min-width: 76px; padding: 0 14px; cursor: pointer; font: inherit; font-weight: 700;
+  background: var(--accent); color: var(--accent-ink); border: 0; border-radius: 10px;
+}
+.part-save.done { background: var(--accent-soft); color: var(--fg); font-weight: 500; }
 #vscreen .pick { min-height: 96px; }
 
 @media (prefers-reduced-motion: reduce) {
@@ -212,7 +218,7 @@ body.dragging .pick { outline: 4px dashed var(--accent); outline-offset: 6px; }
   /* ---------- 동영상 줄이기 (WebCodecs, 기기 안에서 처리) ---------- */
   const MB_URL = 'https://cdn.jsdelivr.net/npm/mediabunny@1.61.1/dist/bundles/mediabunny.min.mjs';
   const vs = $('vscreen');
-  let vFile = null, vResults = null, vConv = null, vStop = false, vUrl = null, wakeLock = null;
+  let vFile = null, vResults = null, partFiles = [], vConv = null, vStop = false, vUrl = null, wakeLock = null;
   function isVideo(f) {
     return (f.type && f.type.startsWith('video/')) || /\.(mp4|mov|m4v|3gp|webm|mkv)$/i.test(f.name);
   }
@@ -228,7 +234,7 @@ body.dragging .pick { outline: 4px dashed var(--accent); outline-offset: 6px; }
   }
   function vState(st) {
     $('vGo').hidden = $('vRes').hidden = $('vSplitRow').hidden = st !== 'ready';
-    if (st !== 'done') $('vParts').hidden = true;
+    $('vParts').hidden = $('vParts').children.length === 0;
     $('vProg').hidden = st !== 'busy';
     $('vCancel').hidden = st !== 'busy';
     $('vSave').hidden = $('vShare').hidden = st !== 'done';
@@ -241,7 +247,7 @@ body.dragging .pick { outline: 4px dashed var(--accent); outline-offset: 6px; }
     } catch {}
   }
   function openVideo(file) {
-    vFile = file; vResults = null; $('vParts').hidden = true;
+    vFile = file; vResults = null; partFiles = []; $('vParts').innerHTML = ''; $('vParts').hidden = true;
     home.hidden = true; vs.hidden = false;
     window.scrollTo(0, 0);
     setPreview(file);
@@ -251,6 +257,7 @@ body.dragging .pick { outline: 4px dashed var(--accent); outline-offset: 6px; }
     resetRes();
     $('vBar').style.width = '0';
     vState('ready');
+    $('vSave').textContent = '저장하기';
   }
   async function closeVideo() {
     if (vConv) { try { await vConv.cancel(); } catch {} vConv = null; }
@@ -307,7 +314,7 @@ body.dragging .pick { outline: 4px dashed var(--accent); outline-offset: 6px; }
     const mode = { long, latency: long <= 854 ? 'realtime' : 'quality' };
     const t0 = performance.now();
     const limit = splitOn ? LIMIT : Infinity;
-    vStop = false;
+    vStop = false; partFiles = []; $('vParts').innerHTML = '';
     $('vPreview').pause();
     vState('busy');
     $('vSize').textContent = '0%';
@@ -387,6 +394,7 @@ body.dragging .pick { outline: 4px dashed var(--accent); outline-offset: 6px; }
         if (frac > 0.05 && spent > 3) $('vSub').textContent = `약 ${fmtTime(spent * (1 - frac) / frac)} 남았어요. 화면을 끄지 말아 주세요.`;
       };
 
+      const base = vFile.name.replace(/\.[^.]+$/, '') || '동영상';
       const blobs = [];
       let lostAudio = false, start = 0;
       while (true) {
@@ -403,13 +411,13 @@ body.dragging .pick { outline: 4px dashed var(--accent); outline-offset: 6px; }
         }
         blobs.push(r.blob);
         lostAudio = lostAudio || r.lostAudio;
+        if (segLen !== Infinity) addPart(new File([r.blob], `${base}_줄임_${blobs.length}.mp4`, { type: 'video/mp4' }));
         if (end === undefined || end >= duration - 0.05) break;
         start = end;
         if (blobs.length > 60) throw Object.assign(new Error('too many parts'), { user: '동영상이 너무 길어요. 더 낮은 화질을 골라 주세요.' });
       }
 
       const took = fmtTime((performance.now() - t0) / 1000);
-      const base = vFile.name.replace(/\.[^.]+$/, '') || '동영상';
       const total = blobs.reduce((n, x) => n + x.size, 0);
       const audioNote = lostAudio ? ' · 이 휴대폰에서는 소리를 함께 넣지 못했어요.' : '';
       if (blobs.length === 1 && total >= vFile.size * 0.95 && vFile.size <= limit) {
@@ -423,15 +431,14 @@ body.dragging .pick { outline: 4px dashed var(--accent); outline-offset: 6px; }
         $('vSub').textContent = `${saved}% 줄었어요. 걸린 시간 ${took}` + audioNote;
         setPreview(vResults[0]);
       } else {
-        vResults = blobs.map((x, i) => new File([x], `${base}_줄임_${i + 1}.mp4`, { type: 'video/mp4' }));
+        vResults = partFiles.slice();
         $('vSize').textContent = `${fmtSize(vFile.size)} → ${blobs.length}개로 나눔`;
+        $('vSave').textContent = '모두 저장하기';
         $('vSub').textContent = `모두 합쳐 ${fmtSize(total)}, 하나당 30MB 이하예요. 걸린 시간 ${took}` + audioNote;
-        $('vParts').innerHTML = vResults.map((f) => `<li><span>${f.name.replace(/[&<>]/g, '')}</span><span>${fmtSize(f.size)}</span></li>`).join('');
         setPreview(vResults[0]);
       }
       $('vBar').style.width = '100%';
       vState('done');
-      $('vParts').hidden = vResults.length < 2;
     } catch (e) {
       vConv = null;
       if (vStop || (e && e.name === 'ConversionCanceledError')) return;
@@ -446,21 +453,46 @@ body.dragging .pick { outline: 4px dashed var(--accent); outline-offset: 6px; }
     vStop = true;
     if (vConv) { try { await vConv.cancel(); } catch {} vConv = null; }
     $('vSize').textContent = '지금 크기 ' + fmtSize(vFile.size);
-    $('vSub').textContent = '줄이기를 멈췄어요.';
+    $('vSub').textContent = partFiles.length ? `줄이기를 멈췄어요. 끝난 ${partFiles.length}개는 아래에서 저장할 수 있어요.` : '줄이기를 멈췄어요.';
     $('vBar').style.width = '0';
     vState('ready');
   };
+  function addPart(file) {
+    partFiles.push(file);
+    const i = partFiles.length - 1;
+    const li = document.createElement('li');
+    li.innerHTML = `<span></span><span></span><button type="button" class="part-save" data-i="${i}">저장</button>`;
+    li.children[0].textContent = `${i + 1}번 조각`;
+    li.children[1].textContent = fmtSize(file.size);
+    $('vParts').appendChild(li);
+    $('vParts').hidden = false;
+  }
+  async function saveFiles(files, quiet) {
+    try {
+      if (isIOS && canShareFiles(files)) {
+        if (!quiet) $('vSub').textContent = '다음 화면에서 "비디오 저장"을 눌러 주세요.';
+        await navigator.share({ files });
+      } else {
+        await downloadAll(files);
+      }
+      return true;
+    } catch (e) {
+      if (!e || e.name !== 'AbortError') $('vSub').textContent = '저장하지 못했어요. 다시 눌러 주세요.';
+      return false;
+    }
+  }
+  $('vParts').addEventListener('click', async (e) => {
+    const btn = e.target.closest('.part-save');
+    if (!btn) return;
+    const f = partFiles[+btn.dataset.i];
+    if (f && await saveFiles([f], true)) { btn.textContent = '저장됨'; btn.classList.add('done'); }
+  });
   $('vSave').onclick = async () => {
     if (!vResults) return;
-    try {
-      if (isIOS && canShareFiles(vResults)) {
-        $('vSub').textContent = '다음 화면에서 "비디오 저장"을 눌러 주세요.';
-        await navigator.share({ files: vResults });
-      } else {
-        await downloadAll(vResults);
-        $('vSub').textContent = (vResults.length > 1 ? `${vResults.length}개 모두 ` : '') + '저장했어요. 갤러리의 "다운로드" 앨범에서 확인하실 수 있어요.';
-      }
-    } catch (e) { if (!e || e.name !== 'AbortError') $('vSub').textContent = '저장하지 못했어요. 다시 눌러 주세요.'; }
+    if (await saveFiles(vResults) && !isIOS) {
+      $('vSub').textContent = (vResults.length > 1 ? `${vResults.length}개 모두 ` : '') + '저장했어요. 갤러리의 "다운로드" 앨범에서 확인하실 수 있어요.';
+      document.querySelectorAll('.part-save').forEach((x) => { x.textContent = '저장됨'; x.classList.add('done'); });
+    }
   };
   $('vShare').onclick = async () => {
     if (!vResults) return;
