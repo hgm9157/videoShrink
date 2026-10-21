@@ -152,6 +152,13 @@ body.dragging .pick { outline: 4px dashed var(--accent); outline-offset: 6px; }
   background: var(--accent); color: var(--accent-ink); border: 0; border-radius: 10px;
 }
 .part-save.done { background: var(--accent-soft); color: var(--fg); font-weight: 500; }
+.tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 5px; background: var(--accent-soft); border-radius: 16px; }
+.tabs button {
+  min-height: 56px; border: 0; border-radius: 12px; cursor: pointer; font: inherit; font-weight: 500;
+  background: transparent; color: var(--fg);
+}
+.tabs button[aria-selected="true"] { background: var(--surface); color: var(--accent); font-weight: 700; box-shadow: 0 1px 3px rgb(0 0 0 / .12); }
+.res3 { grid-template-columns: 1fr 1fr 1fr; }
 #vscreen .pick { min-height: 96px; }
 
 @media (prefers-reduced-motion: reduce) {
@@ -183,6 +190,16 @@ body.dragging .pick { outline: 4px dashed var(--accent); outline-offset: 6px; }
     <p class="vsub" id="vSub"></p>
     <ul class="parts" id="vParts" hidden></ul>
     <div class="vprog" id="vProg" hidden><div id="vBar"></div></div>
+    <div class="tabs" id="vTabs" role="tablist" aria-label="할 일 고르기">
+      <button type="button" role="tab" data-mode="shrink">용량 줄이기</button>
+      <button type="button" role="tab" data-mode="seotda">섯다 분석용 사진</button>
+    </div>
+    <div class="res res3" id="vInt" role="radiogroup" aria-label="캡처 간격" hidden>
+      <button type="button" role="radio" data-sec="1"><b>1초</b><span>추천</span></button>
+      <button type="button" role="radio" data-sec="2"><b>2초</b><span>보통</span></button>
+      <button type="button" role="radio" data-sec="3"><b>3초</b><span>적게</span></button>
+    </div>
+    <button type="button" class="pick" id="vSnap" hidden>사진 만들기</button>
     <div class="res" id="vRes" role="radiogroup" aria-label="화질 고르기">
       <button type="button" role="radio" data-long="640"><b>360p</b><span>가장 작게</span></button>
       <button type="button" role="radio" data-long="854"><b>480p</b><span>카톡용 추천</span></button>
@@ -233,7 +250,10 @@ body.dragging .pick { outline: 4px dashed var(--accent); outline-offset: 6px; }
     $('vPreview').src = vUrl;
   }
   function vState(st) {
-    $('vGo').hidden = $('vRes').hidden = $('vSplitRow').hidden = st !== 'ready';
+    const ready = st === 'ready';
+    $('vTabs').hidden = !ready;
+    $('vGo').hidden = $('vRes').hidden = $('vSplitRow').hidden = !(ready && vMode === 'shrink');
+    $('vSnap').hidden = $('vInt').hidden = !(ready && vMode === 'seotda');
     $('vParts').hidden = $('vParts').children.length === 0;
     $('vProg').hidden = st !== 'busy';
     $('vCancel').hidden = st !== 'busy';
@@ -253,7 +273,7 @@ body.dragging .pick { outline: 4px dashed var(--accent); outline-offset: 6px; }
     setPreview(file);
     $('vName').textContent = file.name;
     $('vSize').textContent = '지금 크기 ' + fmtSize(file.size);
-    $('vSub').textContent = '화질을 고르고 "줄이기"를 누르세요.';
+    paintTabs();
     resetRes();
     $('vBar').style.width = '0';
     vState('ready');
@@ -292,6 +312,153 @@ body.dragging .pick { outline: 4px dashed var(--accent); outline-offset: 6px; }
     if (!visible.some((b) => +b.dataset.long === resLong)) { resLong = +visible[visible.length - 1].dataset.long; paintRes(); }
   });
   paintRes();
+  /* 할 일 고르기: 용량 줄이기 / 섯다 분석용 사진 (마지막 선택 기억) */
+  let vMode = 'shrink';
+  try { if (localStorage.getItem('mode') === 'seotda') vMode = 'seotda'; } catch {}
+  const tabBtns = [...document.querySelectorAll('#vTabs button')];
+  function paintTabs() {
+    tabBtns.forEach((b) => b.setAttribute('aria-selected', String(b.dataset.mode === vMode)));
+    $('vSub').textContent = vMode === 'seotda'
+      ? '고른 간격마다 화면을 찍고, 변화 없는 장면은 건너뛰어요. 8장씩 묶어 사진으로 만들어요.'
+      : '화질을 고르고 "줄이기"를 누르세요.';
+  }
+  tabBtns.forEach((b) => { b.onclick = () => {
+    vMode = b.dataset.mode; try { localStorage.setItem('mode', vMode); } catch {}
+    paintTabs(); vState('ready');
+  }; });
+
+  const intBtns = [...document.querySelectorAll('#vInt button')];
+  let snapSec = 1;
+  try { const v = parseInt(localStorage.getItem('snapSec'), 10); if ([1, 2, 3].includes(v)) snapSec = v; } catch {}
+  function paintInt() { intBtns.forEach((b) => b.setAttribute('aria-checked', String(+b.dataset.sec === snapSec))); }
+  intBtns.forEach((b) => { b.onclick = () => { snapSec = +b.dataset.sec; try { localStorage.setItem('snapSec', String(snapSec)); } catch {} paintInt(); }; });
+  paintInt();
+
+  /* 섯다 분석용 사진: 일정 간격으로 찍고, 직전에 남긴 장면과 거의 같으면 건너뛰고, 8장씩 한 장으로 묶기 */
+  const SHEET_LONG = 1600, HEADER = 44, PER_SHEET = 8;
+  const DIFF_W = 480, DIFF_H = 270, PIX_DIFF = 28, MIN_CHANGED = 6;
+  function hms(t) {
+    t = Math.max(0, Math.floor(t));
+    const h = Math.floor(t / 3600), m = Math.floor(t / 60) % 60, s = t % 60;
+    return [h, m, s].map((x) => String(x).padStart(2, '0')).join(':');
+  }
+  async function makeSheets() {
+    if (!vFile) return;
+    const t0 = performance.now();
+    vStop = false; partFiles = []; $('vParts').innerHTML = '';
+    $('vPreview').pause();
+    vState('busy');
+    $('vSize').textContent = '0%';
+    $('vSub').textContent = '사진을 만드는 중이에요. 화면을 끄지 말고 기다려 주세요.';
+    keepAwake(true);
+    try {
+      const mb = await import(MB_URL);
+      const input = new mb.Input({ source: new mb.BlobSource(vFile), formats: mb.ALL_FORMATS });
+      const vt = await input.getPrimaryVideoTrack();
+      if (!vt) throw Object.assign(new Error('no video'), { user: '동영상 파일이 아닌 것 같아요. 다른 파일을 골라 주세요.' });
+      if (!(await vt.canDecode())) throw Object.assign(new Error('no decoder'), { user: '이 휴대폰(브라우저)에서는 이 동영상을 읽을 수 없어요. 크롬 최신 버전에서 다시 해 보세요.' });
+      const duration = await input.computeDuration();
+
+      // 가로 화면은 2칸×4줄, 세로 화면은 4칸×2줄 → 묶은 사진이 정사각형에 가깝게
+      const W = vt.displayWidth, H = vt.displayHeight;
+      const cols = W >= H ? 2 : 4, rows = PER_SHEET / cols;
+      const k = Math.min(SHEET_LONG / (cols * W), (SHEET_LONG - HEADER) / (rows * H));
+      const cw = Math.round(W * k), ch = Math.round(H * k);
+      const sink = new mb.CanvasSink(vt, { width: cw, height: ch, fit: 'contain', poolSize: 2 });
+
+      const base = vFile.name.replace(/\.[^.]+$/, '') || '동영상';
+      const diff = document.createElement('canvas'); diff.width = DIFF_W; diff.height = DIFF_H;
+      const dctx = diff.getContext('2d', { willReadFrequently: true });
+      let lastGray = null;
+      const gray = new Uint8Array(DIFF_W * DIFF_H);
+
+      let sheet = null, sctx = null, slot = 0, sheetNo = 0, firstT = 0, lastT = 0;
+      let kept = 0, seen = 0;
+      const newSheet = () => {
+        sheet = document.createElement('canvas');
+        sheet.width = cols * cw; sheet.height = HEADER + rows * ch;
+        sctx = sheet.getContext('2d');
+        sctx.fillStyle = '#111'; sctx.fillRect(0, 0, sheet.width, sheet.height);
+        slot = 0;
+      };
+      const flush = async () => {
+        if (!sheet || slot === 0) return;
+        sheetNo++;
+        const usedRows = Math.ceil(slot / cols);
+        const out = document.createElement('canvas');
+        out.width = sheet.width; out.height = HEADER + usedRows * ch;
+        const o = out.getContext('2d');
+        o.drawImage(sheet, 0, 0);
+        o.fillStyle = '#000'; o.fillRect(0, 0, out.width, HEADER);
+        o.fillStyle = '#fff'; o.font = 'bold 22px "Noto Sans KR", sans-serif'; o.textBaseline = 'middle';
+        o.fillText(`${base} · ${sheetNo}번 사진 · ${hms(firstT)} ~ ${hms(lastT)} · ${snapSec}초 간격`, 12, HEADER / 2);
+        const blob = await new Promise((r) => out.toBlob(r, 'image/jpeg', 0.85));
+        const name = `${base}_섯다_${String(sheetNo).padStart(2, '0')}.jpg`;
+        addPart(new File([blob], name, { type: 'image/jpeg' }), `${sheetNo}번 사진 · ${hms(firstT).slice(3)}~${hms(lastT).slice(3)}`);
+        sheet = null;
+      };
+
+      const times = [];
+      for (let t = 0; t < duration - 0.05; t += snapSec) times.push(t);
+      for await (const wc of sink.canvasesAtTimestamps(times)) {
+        const t = times[seen++];
+        if (vStop) return;
+        if (wc) {
+          // 변화 확인: 작게 줄여 흑백으로 비교, 크게 바뀐 점이 몇 개 이상이면 남기기
+          dctx.drawImage(wc.canvas, 0, 0, DIFF_W, DIFF_H);
+          const px = dctx.getImageData(0, 0, DIFF_W, DIFF_H).data;
+          let changed = 0;
+          for (let i = 0, j = 0; j < gray.length; i += 4, j++) {
+            const g = (px[i] * 77 + px[i + 1] * 150 + px[i + 2] * 29) >> 8;
+            if (lastGray && Math.abs(g - lastGray[j]) > PIX_DIFF) changed++;
+            gray[j] = g;
+          }
+          if (!lastGray || changed >= MIN_CHANGED) {
+            lastGray = lastGray || new Uint8Array(gray.length);
+            lastGray.set(gray);
+            if (!sheet) { newSheet(); firstT = t; }
+            const x = (slot % cols) * cw, y = HEADER + Math.floor(slot / cols) * ch;
+            sctx.drawImage(wc.canvas, x, y, cw, ch);
+            // 시각 표시 (노란 글씨, 검은 상자)
+            const label = hms(t);
+            sctx.font = 'bold 22px ui-monospace, Menlo, Consolas, monospace';
+            const tw = sctx.measureText(label).width;
+            sctx.fillStyle = '#000'; sctx.fillRect(x + 4, y + 4, tw + 12, 30);
+            sctx.fillStyle = '#ffd400'; sctx.textBaseline = 'middle'; sctx.fillText(label, x + 10, y + 19);
+            // 칸 구분선
+            sctx.strokeStyle = '#444'; sctx.lineWidth = 2; sctx.strokeRect(x + 1, y + 1, cw - 2, ch - 2);
+            lastT = t; slot++; kept++;
+            if (slot === PER_SHEET) await flush();
+          }
+        }
+        const frac = seen / times.length;
+        $('vSize').textContent = Math.min(99, Math.floor(frac * 100)) + '%';
+        $('vBar').style.width = Math.min(99, Math.floor(frac * 100)) + '%';
+        const spent = (performance.now() - t0) / 1000;
+        if (frac > 0.05 && spent > 3) $('vSub').textContent = `약 ${fmtTime(spent * (1 - frac) / frac)} 남았어요. 지금까지 사진 ${sheetNo}장`;
+      }
+      await flush();
+      if (vStop) return;
+
+      const took = fmtTime((performance.now() - t0) / 1000);
+      vResults = partFiles.slice();
+      const skipped = times.length - kept;
+      $('vSize').textContent = `사진 ${vResults.length}장 (장면 ${kept}개)`;
+      $('vSub').textContent = `${hms(duration)} 영상에서 변화 없는 장면 ${skipped}개를 건너뛰었어요. 걸린 시간 ${took}`
+        + (vResults.length > 20 ? ` · Claude에는 한 번에 20장까지 올릴 수 있어요. 1~20번을 먼저 올리고 나머지는 다음 메시지로 올려 주세요.` : '');
+      $('vSave').textContent = vResults.length > 1 ? '모두 저장하기' : '저장하기';
+      $('vBar').style.width = '100%';
+      vState('done');
+    } catch (e) {
+      if (vStop) return;
+      console.error(e);
+      $('vSize').textContent = '사진을 만들지 못했어요';
+      $('vSub').textContent = (e && e.user) || '지원하지 않는 동영상 형식일 수 있어요. 다시 눌러 보세요.';
+      vState('ready');
+    } finally { keepAwake(false); }
+  }
+  $('vSnap').onclick = makeSheets;
+
   const LIMIT = 30 * 1024 * 1024;
   let splitOn = true;
   try { if (localStorage.getItem('split') === '0') splitOn = false; } catch {}
@@ -453,16 +620,16 @@ body.dragging .pick { outline: 4px dashed var(--accent); outline-offset: 6px; }
     vStop = true;
     if (vConv) { try { await vConv.cancel(); } catch {} vConv = null; }
     $('vSize').textContent = '지금 크기 ' + fmtSize(vFile.size);
-    $('vSub').textContent = partFiles.length ? `줄이기를 멈췄어요. 끝난 ${partFiles.length}개는 아래에서 저장할 수 있어요.` : '줄이기를 멈췄어요.';
+    $('vSub').textContent = partFiles.length ? `멈췄어요. 끝난 ${partFiles.length}개는 아래에서 저장할 수 있어요.` : '멈췄어요.';
     $('vBar').style.width = '0';
     vState('ready');
   };
-  function addPart(file) {
+  function addPart(file, label) {
     partFiles.push(file);
     const i = partFiles.length - 1;
     const li = document.createElement('li');
     li.innerHTML = `<span></span><span></span><button type="button" class="part-save" data-i="${i}">저장</button>`;
-    li.children[0].textContent = `${i + 1}번 조각`;
+    li.children[0].textContent = label || `${i + 1}번 조각`;
     li.children[1].textContent = fmtSize(file.size);
     $('vParts').appendChild(li);
     $('vParts').hidden = false;
