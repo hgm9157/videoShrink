@@ -208,6 +208,7 @@ body.dragging .pick { outline: 4px dashed var(--accent); outline-offset: 6px; }
     </div>
     <label class="split" id="vSplitRow"><input type="checkbox" id="vSplit"><span>30MB가 넘으면 나누기 <small>(Claude 업로드용)</small></span></label>
     <button type="button" class="pick" id="vGo">줄이기</button>
+    <button type="button" class="pick" id="vZip" hidden>ZIP으로 한 번에 받기</button>
     <button type="button" class="pick" id="vSave" hidden>저장하기</button>
     <button type="button" class="tbtn vwide" id="vShare" hidden>카카오톡 등으로 보내기</button>
     <button type="button" class="link-btn" id="vCancel" hidden>그만하기</button>
@@ -258,6 +259,8 @@ body.dragging .pick { outline: 4px dashed var(--accent); outline-offset: 6px; }
     $('vProg').hidden = st !== 'busy';
     $('vCancel').hidden = st !== 'busy';
     $('vSave').hidden = $('vShare').hidden = st !== 'done';
+    $('vZip').hidden = !(st === 'done' && vResults && vResults.length > 1 && vResults[0].type === 'image/jpeg');
+    $('vSave').className = $('vZip').hidden ? 'pick' : 'tbtn vwide';
     if (st === 'done') $('vShare').hidden = !navigator.share;
   }
   async function keepAwake(on) {
@@ -394,7 +397,7 @@ body.dragging .pick { outline: 4px dashed var(--accent); outline-offset: 6px; }
         o.fillText(`${base} · ${sheetNo}번 사진 · ${hms(firstT)} ~ ${hms(lastT)} · ${snapSec}초 간격`, 12, HEADER / 2);
         const blob = await new Promise((r) => out.toBlob(r, 'image/jpeg', 0.85));
         const name = `${base}_섯다_${String(sheetNo).padStart(2, '0')}.jpg`;
-        addPart(new File([blob], name, { type: 'image/jpeg' }), `${sheetNo}번 사진 · ${hms(firstT).slice(3)}~${hms(lastT).slice(3)}`);
+        addPart(new File([blob], name, { type: 'image/jpeg' }), `${sheetNo}번 · ${hms(firstT).slice(3)}~${hms(lastT).slice(3)}`);
         sheet = null;
       };
 
@@ -654,6 +657,40 @@ body.dragging .pick { outline: 4px dashed var(--accent); outline-offset: 6px; }
     const f = partFiles[+btn.dataset.i];
     if (f && await saveFiles([f], true)) { btn.textContent = '저장됨'; btn.classList.add('done'); }
   });
+  /* 사진 전부를 ZIP 하나로 (사진은 이미 압축돼 있어 저장만 함) */
+  const JSZIP_URL = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+  let jszipReady = null;
+  function loadJSZip() {
+    if (!jszipReady) {
+      jszipReady = new Promise((res, rej) => {
+        const sc = document.createElement('script');
+        sc.src = JSZIP_URL; sc.onload = () => res(window.JSZip); sc.onerror = () => { jszipReady = null; rej(new Error('jszip')); };
+        document.head.appendChild(sc);
+      });
+    }
+    return jszipReady;
+  }
+  $('vZip').onclick = async () => {
+    if (!vResults || !vResults.length) return;
+    const btn = $('vZip');
+    btn.disabled = true; const old = btn.textContent; btn.textContent = 'ZIP 만드는 중…';
+    try {
+      const JSZip = await loadJSZip();
+      const zip = new JSZip();
+      vResults.forEach((f) => zip.file(f.name, f));
+      const blob = await zip.generateAsync({ type: 'blob', compression: 'STORE' });
+      const zname = vResults[0].name.replace(/_섯다_\d+\.jpg$/, '') + '_섯다.zip';
+      const zf = new File([blob], zname, { type: 'application/zip' });
+      if (await saveFiles([zf], true)) {
+        $('vSub').textContent = isIOS
+          ? `"파일에 저장"을 고르면 ZIP 파일(${fmtSize(zf.size)})로 저장돼요.`
+          : `ZIP 파일 하나(${fmtSize(zf.size)})로 저장했어요. "다운로드" 폴더에서 확인하실 수 있어요.`;
+      }
+    } catch (e) {
+      console.error(e);
+      $('vSub').textContent = 'ZIP을 만들지 못했어요. 인터넷 연결을 확인하고 다시 눌러 주세요.';
+    } finally { btn.disabled = false; btn.textContent = old; }
+  };
   $('vSave').onclick = async () => {
     if (!vResults) return;
     if (await saveFiles(vResults) && !isIOS) {
