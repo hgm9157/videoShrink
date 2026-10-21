@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1d6a51">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="동영상 줄이기">
+<title>동영상 줄이기</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gowun+Batang:wght@700&family=Noto+Sans+KR:wght@400;500;700&display=swap">
+<style>
+/* Layout: one big button at home; a single column with the video, its size and one action at a time. */
+:root {
+  --bg: #edf1ee;
+  --surface: #ffffff;
+  --fg: #16201b;
+  --muted: #4b5952;
+  --line: #c9d3cd;
+  --accent: #1d6a51;
+  --accent-ink: #ffffff;
+  --accent-soft: #dcebe4;
+  --warn-bg: #fbeee6;
+  --warn-fg: #8a3510;
+  --paper: #ffffff;
+  --shadow: 0 1px 2px rgb(22 32 27 / .10), 0 6px 18px rgb(22 32 27 / .08);
+  --display: "Gowun Batang", "Noto Serif KR", serif;
+  --body: "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111714; --surface: #1a221e; --fg: #e8eeea; --muted: #a9b7af; --line: #33403a;
+    --accent: #63c49d; --accent-ink: #0b1712; --accent-soft: #1f3a2f;
+    --warn-bg: #3a2216; --warn-fg: #ffc4a3;
+    --shadow: 0 1px 2px rgb(0 0 0 / .4), 0 8px 24px rgb(0 0 0 / .35);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111714; --surface: #1a221e; --fg: #e8eeea; --muted: #a9b7af; --line: #33403a;
+  --accent: #63c49d; --accent-ink: #0b1712; --accent-soft: #1f3a2f;
+  --warn-bg: #3a2216; --warn-fg: #ffc4a3;
+  --shadow: 0 1px 2px rgb(0 0 0 / .4), 0 8px 24px rgb(0 0 0 / .35);
+  color-scheme: dark;
+}
+
+html { -webkit-text-size-adjust: 100%; }
+body {
+  background: var(--bg); color: var(--fg);
+  font-family: var(--body); font-size: 20px; line-height: 1.6;
+  word-break: keep-all; overflow-wrap: anywhere;
+}
+body::before {
+  content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px);
+  z-index: 10; background: var(--surface);
+}
+button, label.btn { font: inherit; }
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; border-radius: 10px; }
+html, body { margin: 0; }
+:root { padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+[hidden] { display: none !important; }
+
+.home {
+  box-sizing: border-box; max-width: 640px; margin: 0 auto;
+  min-height: calc(100vh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+  min-height: calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 24px;
+  display: flex; flex-direction: column; justify-content: center; text-align: center;
+}
+.pick {
+  display: flex; align-items: center; justify-content: center; gap: 16px;
+  min-height: 112px; padding: 20px;
+  background: var(--accent); color: var(--accent-ink);
+  border: 0; border-radius: 22px; cursor: pointer;
+  font-size: 1.6rem; font-weight: 700; letter-spacing: -0.01em;
+  box-shadow: var(--shadow);
+  transition: transform .12s ease, filter .12s ease;
+}
+.pick:hover { filter: brightness(1.06); }
+.pick:active { transform: scale(.985); }
+.pick svg { width: 44px; height: 44px; flex: none; }
+.pick { min-height: 140px; font-size: 2rem; }
+body.dragging .pick { outline: 4px dashed var(--accent); outline-offset: 6px; }
+
+.bar {
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5;
+  background: var(--surface); border-bottom: 1px solid var(--line);
+  padding-left: max(12px, env(safe-area-inset-left, 0px));
+  padding-right: max(12px, env(safe-area-inset-right, 0px));
+  padding-block: 10px;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+}
+.bar .name {
+  flex: 1 1 160px; min-width: 0; font-weight: 700; font-size: 1.05rem;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.tbtn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  min-height: 56px; min-width: 56px; padding: 0 16px;
+  background: var(--bg); color: var(--fg); border: 2px solid var(--line);
+  border-radius: 14px; cursor: pointer; font-size: 1.05rem; font-weight: 500;
+}
+.tbtn:hover { border-color: var(--accent); }
+.tbtn:disabled { opacity: .4; cursor: default; }
+.tbtn svg { width: 24px; height: 24px; }
+.tbtn.back { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.link-btn { background: none; border: 0; color: var(--muted); text-decoration: underline; font: inherit; font-size: 1rem; padding: 10px; min-height: 48px; cursor: pointer; }
+.vbox {
+  max-width: 560px; margin: 0 auto; box-sizing: border-box;
+  padding-block: 20px 48px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: flex; flex-direction: column; gap: 14px; text-align: center;
+}
+.vbox p { margin: 0; }
+.vprev { width: 100%; max-height: 46vh; background: #000; border-radius: 16px; }
+.vname { color: var(--muted); font-size: .95rem; overflow-wrap: anywhere; }
+.vbig { font-size: 1.6rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.vsub { color: var(--muted); }
+.vprog { height: 22px; border-radius: 11px; background: var(--accent-soft); overflow: hidden; }
+.vprog > div { height: 100%; width: 0; background: var(--accent); transition: width .3s ease; }
+.vwide { width: 100%; min-height: 72px; font-size: 1.2rem; }
+#vscreen .pick { min-height: 96px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .pick, .vprog > div { transition: none; }
+}
+@media (max-width: 420px) {
+  body { font-size: 19px; }
+}
+</style>
+</head>
+<body>
+<input type="file" id="videoFile" hidden accept="video/*,.mp4,.mov,.m4v,.3gp,.webm,.mkv">
+
+<main id="home" class="home">
+  <label for="videoFile" class="pick" id="videoBtn" tabindex="0" role="button">동영상 줄이기</label>
+</main>
+
+<section id="vscreen" hidden>
+  <div class="bar">
+    <button type="button" class="tbtn back" id="vBack" aria-label="처음 화면으로">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
+      <span class="lbl">뒤로</span>
+    </button>
+  </div>
+  <div class="vbox">
+    <video id="vPreview" class="vprev" controls playsinline preload="metadata"></video>
+    <p class="vname" id="vName"></p>
+    <p class="vbig" id="vSize"></p>
+    <p class="vsub" id="vSub"></p>
+    <div class="vprog" id="vProg" hidden><div id="vBar"></div></div>
+    <button type="button" class="pick" id="vGo">줄이기</button>
+    <button type="button" class="pick" id="vSave" hidden>저장하기</button>
+    <button type="button" class="tbtn vwide" id="vShare" hidden>카카오톡 등으로 보내기</button>
+    <button type="button" class="link-btn" id="vCancel" hidden>그만하기</button>
+  </div>
+</section>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const home = $('home');
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  function canShareFiles(files) {
+    try { return !!(navigator.canShare && navigator.canShare({ files })); } catch { return false; }
+  }
+  async function downloadAll(files) {
+    for (const f of files) {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(f); a.download = f.name;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+      await new Promise((r) => setTimeout(r, 400));
+    }
+  }
+
+  /* ---------- 동영상 줄이기 (WebCodecs, 기기 안에서 처리) ---------- */
+  const MB_URL = 'https://cdn.jsdelivr.net/npm/mediabunny@1.61.1/dist/bundles/mediabunny.min.mjs';
+  const vs = $('vscreen');
+  let vFile = null, vResult = null, vConv = null, vUrl = null, wakeLock = null;
+  function isVideo(f) {
+    return (f.type && f.type.startsWith('video/')) || /\.(mp4|mov|m4v|3gp|webm|mkv)$/i.test(f.name);
+  }
+  function fmtSize(n) {
+    if (n >= 1024 * 1024 * 1024) return (n / 1024 / 1024 / 1024).toFixed(1) + 'GB';
+    if (n >= 1024 * 1024) return Math.round(n / 1024 / 1024) + 'MB';
+    return Math.max(1, Math.round(n / 1024)) + 'KB';
+  }
+  function setPreview(blob) {
+    if (vUrl) URL.revokeObjectURL(vUrl);
+    vUrl = URL.createObjectURL(blob);
+    $('vPreview').src = vUrl;
+  }
+  function vState(st) {
+    $('vGo').hidden = st !== 'ready';
+    $('vProg').hidden = st !== 'busy';
+    $('vCancel').hidden = st !== 'busy';
+    $('vSave').hidden = $('vShare').hidden = st !== 'done';
+    if (st === 'done') $('vShare').hidden = !navigator.share;
+  }
+  async function keepAwake(on) {
+    try {
+      if (on && navigator.wakeLock) wakeLock = await navigator.wakeLock.request('screen');
+      else if (!on && wakeLock) { await wakeLock.release(); wakeLock = null; }
+    } catch {}
+  }
+  function openVideo(file) {
+    vFile = file; vResult = null;
+    home.hidden = true; vs.hidden = false;
+    window.scrollTo(0, 0);
+    setPreview(file);
+    $('vName').textContent = file.name;
+    $('vSize').textContent = '지금 크기 ' + fmtSize(file.size);
+    $('vSub').textContent = '카카오톡으로 보내기 좋은 크기로 줄여 드려요.';
+    $('vBar').style.width = '0';
+    vState('ready');
+  }
+  async function closeVideo() {
+    if (vConv) { try { await vConv.cancel(); } catch {} vConv = null; }
+    keepAwake(false);
+    $('vPreview').removeAttribute('src'); $('vPreview').load();
+    if (vUrl) { URL.revokeObjectURL(vUrl); vUrl = null; }
+    vFile = vResult = null;
+    vs.hidden = true; home.hidden = false;
+    $('videoFile').value = '';
+  }
+  $('vBack').onclick = closeVideo;
+  $('videoFile').addEventListener('change', () => { const f = $('videoFile').files[0]; if (f) openVideo(f); });
+
+  $('videoBtn').addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('videoFile').click(); } });
+
+  $('vGo').onclick = async () => {
+    if (!vFile) return;
+    $('vPreview').pause();
+    vState('busy');
+    $('vSize').textContent = '0%';
+    $('vSub').textContent = '줄이는 중이에요. 화면을 끄지 말고 기다려 주세요.';
+    keepAwake(true);
+    try {
+      const mb = await import(MB_URL);
+      let codec = null;
+      for (const c of ['avc', 'vp9']) { if (await mb.canEncodeVideo(c)) { codec = c; break; } }
+      if (!codec) throw Object.assign(new Error('no encoder'), { user: '이 휴대폰(브라우저)에서는 동영상을 줄일 수 없어요. 크롬 최신 버전에서 다시 해 보세요.' });
+
+      const input = new mb.Input({ source: new mb.BlobSource(vFile), formats: mb.ALL_FORMATS });
+      const output = new mb.Output({ format: new mb.Mp4OutputFormat({ fastStart: 'in-memory' }), target: new mb.BufferTarget() });
+      const conv = await mb.Conversion.init({
+        input, output, tracks: 'primary',
+        video: (track) => {
+          const w = track.displayWidth, h = track.displayHeight;
+          const LONG = 1280;
+          const opts = { codec, frameRate: 30, forceTranscode: true, keyFrameInterval: 4 };
+          if (Math.max(w, h) > LONG) { if (w >= h) opts.width = LONG; else opts.height = LONG; }
+          const ow = opts.width ? LONG : opts.height ? Math.round(w * LONG / h) : w;
+          const oh = opts.height ? LONG : opts.width ? Math.round(h * LONG / w) : h;
+          opts.bitrate = Math.round(Math.min(2_500_000, Math.max(600_000, ow * oh * 30 * 0.07)));
+          return opts;
+        },
+        audio: async () => ((await mb.canEncodeAudio('aac')) ? { codec: 'aac', bitrate: 96_000 } : {}),
+      });
+      if (!conv.utilizedTracks.some((t) => t.type === 'video')) {
+        throw Object.assign(new Error('video track dropped'), { user: '이 휴대폰(브라우저)에서는 이 동영상 형식을 줄일 수 없어요. 크롬 최신 버전에서 다시 해 보세요.' });
+      }
+      if (!conv.isValid) {
+        throw Object.assign(new Error('invalid'), { user: '이 동영상은 줄일 수 없는 형식이에요.' });
+      }
+      vConv = conv;
+      conv.onProgress = (p) => {
+        const pct = Math.min(99, Math.floor(p * 100));
+        $('vSize').textContent = pct + '%';
+        $('vBar').style.width = pct + '%';
+      };
+      await conv.execute();
+      vConv = null;
+      const lostAudio = conv.discardedTracks.some((d) => d.track.type === 'audio');
+      const out = new Blob([output.target.buffer], { type: 'video/mp4' });
+      const base = vFile.name.replace(/\.[^.]+$/, '') || '동영상';
+      if (out.size >= vFile.size * 0.95) {
+        vResult = new File([vFile], vFile.name, { type: vFile.type || 'video/mp4' });
+        $('vSize').textContent = fmtSize(vFile.size);
+        $('vSub').textContent = '이미 충분히 작은 동영상이에요. 원래 동영상을 그대로 쓰셔도 돼요.';
+      } else {
+        vResult = new File([out], base + '_줄임.mp4', { type: 'video/mp4' });
+        const saved = Math.round((1 - out.size / vFile.size) * 100);
+        $('vSize').textContent = `${fmtSize(vFile.size)} → ${fmtSize(out.size)}`;
+        $('vSub').textContent = `${saved}% 줄었어요.` + (lostAudio ? ' 이 휴대폰에서는 소리를 함께 넣지 못했어요.' : '');
+        setPreview(vResult);
+      }
+      $('vBar').style.width = '100%';
+      vState('done');
+    } catch (e) {
+      vConv = null;
+      if (e && e.name === 'ConversionCanceledError') return;
+      console.error(e);
+      $('vSize').textContent = '줄이지 못했어요';
+      $('vSub').textContent = (e && e.user) || '동영상이 너무 길거나 지원하지 않는 형식일 수 있어요. 다시 눌러 보세요.';
+      vState('ready');
+    } finally { keepAwake(false); }
+  };
+  $('vCancel').onclick = async () => {
+    if (vConv) { try { await vConv.cancel(); } catch {} vConv = null; }
+    $('vSize').textContent = '지금 크기 ' + fmtSize(vFile.size);
+    $('vSub').textContent = '줄이기를 멈췄어요.';
+    $('vBar').style.width = '0';
+    vState('ready');
+  };
+  $('vSave').onclick = async () => {
+    if (!vResult) return;
+    try {
+      if (isIOS && canShareFiles([vResult])) {
+        $('vSub').textContent = '다음 화면에서 "비디오 저장"을 눌러 주세요.';
+        await navigator.share({ files: [vResult] });
+      } else {
+        await downloadAll([vResult]);
+        $('vSub').textContent = '저장했어요. 갤러리의 "다운로드" 앨범에서 확인하실 수 있어요.';
+      }
+    } catch (e) { if (!e || e.name !== 'AbortError') $('vSub').textContent = '저장하지 못했어요. 다시 눌러 주세요.'; }
+  };
+  $('vShare').onclick = async () => {
+    if (!vResult) return;
+    try {
+      if (!canShareFiles([vResult])) { $('vSub').textContent = '이 기기에서는 바로 보낼 수 없어요. "저장하기"를 눌러 주세요.'; return; }
+      await navigator.share({ files: [vResult] });
+    } catch (e) { if (!e || e.name !== 'AbortError') $('vSub').textContent = '보내지 못했어요. 다시 눌러 주세요.'; }
+  };
+
+
+  /* files shared from other apps (Android share sheet → sw.js) */
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  (async () => {
+    const q = new URLSearchParams(location.search).get('shared');
+    if (!q) return;
+    history.replaceState(null, '', location.pathname);
+    try {
+      const cache = await caches.open('shared-file-v1');
+      const key = new URL('./__shared__', location.href).href;
+      const res = await cache.match(key);
+      if (!res) return;
+      const name = decodeURIComponent(res.headers.get('X-File-Name') || '동영상.mp4');
+      const blob = await res.blob();
+      await cache.delete(key);
+      openVideo(new File([blob], name, { type: blob.type }));
+    } catch {}
+  })();
+
+  /* drag & drop on desktop */
+  let dragDepth = 0;
+  window.addEventListener('dragenter', (e) => { e.preventDefault(); dragDepth++; document.body.classList.add('dragging'); });
+  window.addEventListener('dragleave', () => { if (--dragDepth <= 0) { dragDepth = 0; document.body.classList.remove('dragging'); } });
+  window.addEventListener('dragover', (e) => e.preventDefault());
+  window.addEventListener('drop', (e) => {
+    e.preventDefault(); dragDepth = 0; document.body.classList.remove('dragging');
+    const f = e.dataTransfer && e.dataTransfer.files[0];
+    if (f) openVideo(f);
+  });
+})();
+</script>
+</body>
+</html>
