@@ -250,18 +250,18 @@ body.dragging .pick { outline: 4px dashed var(--accent); outline-offset: 6px; }
     vUrl = URL.createObjectURL(blob);
     $('vPreview').src = vUrl;
   }
+  let photoRun = false;   // 섯다 사진 만들기 중/결과: ZIP 받기만 보여줌
   function vState(st) {
     const ready = st === 'ready';
     $('vTabs').hidden = !ready;
     $('vGo').hidden = $('vRes').hidden = $('vSplitRow').hidden = !(ready && vMode === 'shrink');
     $('vSnap').hidden = $('vInt').hidden = !(ready && vMode === 'seotda');
-    $('vParts').hidden = $('vParts').children.length === 0;
+    $('vParts').hidden = photoRun || $('vParts').children.length === 0;
     $('vProg').hidden = st !== 'busy';
     $('vCancel').hidden = st !== 'busy';
-    $('vSave').hidden = $('vShare').hidden = st !== 'done';
-    $('vZip').hidden = !(st === 'done' && vResults && vResults.length > 1 && vResults[0].type === 'image/jpeg');
-    $('vSave').className = $('vZip').hidden ? 'pick' : 'tbtn vwide';
-    if (st === 'done') $('vShare').hidden = !navigator.share;
+    $('vSave').hidden = $('vShare').hidden = st !== 'done' || photoRun;
+    if (st === 'done' && !photoRun) $('vShare').hidden = !navigator.share;
+    $('vZip').hidden = !(st === 'done' && photoRun);
   }
   async function keepAwake(on) {
     try {
@@ -270,7 +270,7 @@ body.dragging .pick { outline: 4px dashed var(--accent); outline-offset: 6px; }
     } catch {}
   }
   function openVideo(file) {
-    vFile = file; vResults = null; partFiles = []; $('vParts').innerHTML = ''; $('vParts').hidden = true;
+    vFile = file; vResults = null; photoRun = false; partFiles = []; $('vParts').innerHTML = ''; $('vParts').hidden = true;
     home.hidden = true; vs.hidden = false;
     window.scrollTo(0, 0);
     setPreview(file);
@@ -347,6 +347,7 @@ body.dragging .pick { outline: 4px dashed var(--accent); outline-offset: 6px; }
   }
   async function makeSheets() {
     if (!vFile) return;
+    photoRun = true;
     const t0 = performance.now();
     vStop = false; partFiles = []; $('vParts').innerHTML = '';
     $('vPreview').pause();
@@ -447,8 +448,7 @@ body.dragging .pick { outline: 4px dashed var(--accent); outline-offset: 6px; }
       vResults = partFiles.slice();
       const skipped = times.length - kept;
       $('vSize').textContent = `사진 ${vResults.length}장 (장면 ${kept}개)`;
-      $('vSub').textContent = `${hms(duration)} 영상에서 변화 없는 장면 ${skipped}개를 건너뛰었어요. 걸린 시간 ${took}`
-        + (vResults.length > 20 ? ` · Claude에는 한 번에 20장까지 올릴 수 있어요. 1~20번을 먼저 올리고 나머지는 다음 메시지로 올려 주세요.` : '');
+      $('vSub').textContent = `${hms(duration)} 영상에서 변화 없는 장면 ${skipped}개를 건너뛰었어요. 걸린 시간 ${took}`;
       $('vSave').textContent = vResults.length > 1 ? '모두 저장하기' : '저장하기';
       $('vBar').style.width = '100%';
       vState('done');
@@ -481,6 +481,7 @@ body.dragging .pick { outline: 4px dashed var(--accent); outline-offset: 6px; }
   }
   async function compress(long) {
     if (!vFile) return;
+    photoRun = false;
     const mode = { long, latency: long <= 854 ? 'realtime' : 'quality' };
     const t0 = performance.now();
     const limit = splitOn ? LIMIT : Infinity;
@@ -623,7 +624,8 @@ body.dragging .pick { outline: 4px dashed var(--accent); outline-offset: 6px; }
     vStop = true;
     if (vConv) { try { await vConv.cancel(); } catch {} vConv = null; }
     $('vSize').textContent = '지금 크기 ' + fmtSize(vFile.size);
-    $('vSub').textContent = partFiles.length ? `멈췄어요. 끝난 ${partFiles.length}개는 아래에서 저장할 수 있어요.` : '멈췄어요.';
+    $('vSub').textContent = partFiles.length && !photoRun ? `멈췄어요. 끝난 ${partFiles.length}개는 아래에서 저장할 수 있어요.` : '멈췄어요.';
+    if (photoRun) { photoRun = false; partFiles = []; $('vParts').innerHTML = ''; }
     $('vBar').style.width = '0';
     vState('ready');
   };
@@ -635,7 +637,7 @@ body.dragging .pick { outline: 4px dashed var(--accent); outline-offset: 6px; }
     li.children[0].textContent = label || `${i + 1}번 조각`;
     li.children[1].textContent = fmtSize(file.size);
     $('vParts').appendChild(li);
-    $('vParts').hidden = false;
+    $('vParts').hidden = photoRun;
   }
   async function saveFiles(files, quiet) {
     try {
